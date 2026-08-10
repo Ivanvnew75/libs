@@ -77,6 +77,12 @@ func (c *Client) DoJSON(ctx context.Context, method, url string, in, out any) er
 		if in != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		// Прокидываем сквозной идентификатор дальше по цепочке вызовов.
+		// Без этой строки request_id обрывается на границе сервиса,
+		// и связать логи двух сервисов становится нечем.
+		if rid := RequestIDFromContext(ctx); rid != "" {
+			req.Header.Set(HeaderRequestID, rid)
+		}
 
 		resp, err := c.http.Do(req)
 		if err != nil {

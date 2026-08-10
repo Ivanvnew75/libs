@@ -12,10 +12,10 @@ import (
 //
 // Фактор 9 (Disposability). Механика в Kubernetes такая:
 //
-//	1. под помечается Terminating и СРАЗУ убирается из endpoints Service;
-//	2. контейнеру шлётся SIGTERM;
-//	3. через terminationGracePeriodSeconds прилетает SIGKILL, который
-//	   перехватить невозможно.
+//  1. под помечается Terminating и СРАЗУ убирается из endpoints Service;
+//  2. контейнеру шлётся SIGTERM;
+//  3. через terminationGracePeriodSeconds прилетает SIGKILL, который
+//     перехватить невозможно.
 //
 // Шаги 1 и 2 происходят параллельно и асинхронно: kubelet может доставить
 // SIGTERM раньше, чем kube-proxy на всех узлах перепишет правила. Поэтому

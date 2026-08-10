@@ -1,0 +1,44 @@
+name: CI
+
+# У общей библиотеки CI нужнее, чем у сервиса: её ломает не свой прод,
+# а три чужих. Ошибка, попавшая в тег, разъезжается по потребителям
+# и чинится только новым тегом — теги неизменяемы.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        # ВАЖНО: `gofmt -l` печатает список файлов и всегда выходит с кодом 0.
+        # Наивное `gofmt -l . && go vet ./...` пропускает неотформатированный
+        # код молча — на этом я и попался, закоммитив мусор в тег v0.2.0.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Не отформатированы gofmt:"; echo "$unformatted"
+            gofmt -d $unformatted
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...

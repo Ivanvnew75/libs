@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
 // Handler обрабатывает одно сообщение.
@@ -48,6 +49,13 @@ type ConsumerConfig struct {
 	Group    string
 	DLQTopic string
 
+	// SASLUser/SASLPassword — аутентификация SCRAM-SHA-512.
+	// Пустой пользователь означает подключение без аутентификации:
+	// это допустимо только на время миграции, когда часть клиентов
+	// ещё ходит на слушатель без auth.
+	SASLUser     string
+	SASLPassword string
+
 	Log *slog.Logger
 
 	// MaxRetries — сколько раз повторить временную ошибку, прежде чем
@@ -72,8 +80,22 @@ func NewConsumer(cfg ConsumerConfig) *Consumer {
 		cfg.MaxRetries = 5
 	}
 
+	dialer := &kafka.Dialer{Timeout: 10 * time.Second, DualStack: true}
+	if cfg.SASLUser != "" {
+		// SCRAM-SHA-512: по сети идёт не пароль, а доказательство
+		// знания пароля. PLAIN отправил бы сам пароль, и без TLS
+		// это подарок любому, кто слушает трафик внутри кластера.
+		m, err := scram.Mechanism(scram.SHA512, cfg.SASLUser, cfg.SASLPassword)
+		if err != nil {
+			cfg.Log.Error("не удалось настроить SASL", slog.String("error", err.Error()))
+		} else {
+			dialer.SASLMechanism = m
+		}
+	}
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: cfg.Brokers,
+		Dialer:  dialer,
 		Topic:   cfg.Topic,
 		GroupID: cfg.Group,
 
@@ -102,8 +124,9 @@ func NewConsumer(cfg ConsumerConfig) *Consumer {
 	var dlq *kafka.Writer
 	if cfg.DLQTopic != "" {
 		dlq = &kafka.Writer{
-			Addr:  kafka.TCP(cfg.Brokers...),
-			Topic: cfg.DLQTopic,
+			Addr:      kafka.TCP(cfg.Brokers...),
+			Topic:     cfg.DLQTopic,
+			Transport: saslTransport(cfg.SASLUser, cfg.SASLPassword),
 			// RequireOne: подтверждение от лидера партиции.
 			// RequireNone (fire-and-forget) для DLQ недопустим — мы бы
 			// теряли ровно те сообщения, ради сохранения которых DLQ и есть.
@@ -258,3 +281,19 @@ func (c *Consumer) Close() error {
 // Но если рядом появится второй потребитель Stats(), они начнут
 // отбирать друг у друга данные.
 func (c *Consumer) Lag() int64 { return c.reader.Stats().Lag }
+
+// saslTransport собирает транспорт с SASL, если заданы учётные данные.
+//
+// Продюсер и потребитель в kafka-go настраиваются РАЗНЫМИ способами:
+// у Reader это Dialer, у Writer — Transport. Одинакового поля нет,
+// и это первое, обо что спотыкаются при включении SASL.
+func saslTransport(user, pass string) *kafka.Transport {
+	if user == "" {
+		return nil
+	}
+	m, err := scram.Mechanism(scram.SHA512, user, pass)
+	if err != nil {
+		return nil
+	}
+	return &kafka.Transport{SASL: m, DialTimeout: 10 * time.Second}
+}

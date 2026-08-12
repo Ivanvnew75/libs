@@ -17,9 +17,16 @@ import (
 // Один из самых неприятных классов багов: он не воспроизводится,
 // пока всё хорошо.
 func NewWriter(brokers []string, topic string, log *slog.Logger) *kafka.Writer {
+	return NewWriterSASL(brokers, topic, "", "", log)
+}
+
+// NewWriterSASL — продюсер с аутентификацией SCRAM-SHA-512.
+// Пустой user означает подключение без аутентификации.
+func NewWriterSASL(brokers []string, topic, user, pass string, log *slog.Logger) *kafka.Writer {
 	return &kafka.Writer{
-		Addr:  kafka.TCP(brokers...),
-		Topic: topic,
+		Transport: saslTransport(user, pass),
+		Addr:      kafka.TCP(brokers...),
+		Topic:     topic,
 
 		// RequireAll = acks=all: ждать подтверждения от всех реплик в ISR.
 		// На стенде с одним брокером это то же, что RequireOne, но правильное
